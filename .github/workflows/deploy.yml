@@ -11,6 +11,7 @@ permissions:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+
     steps:
       # Step 1: Checkout the repository
       - name: Checkout Source
@@ -54,4 +55,55 @@ jobs:
           EC2_USER: root
           EC2_PASSWORD: aruns777389@AKL
         run: |
-          sshpass -p "$EC2_PASSWORD"
+          sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
+            cd /home/admin/web/zyk.li/public_html/backend &&
+            rm -rf node_modules &&
+            npm install --production
+          "
+
+      # Step 8: Setup PM2 on EC2 (Install PM2 if not already installed)
+      - name: Install PM2 on EC2
+        env:
+          EC2_HOST: 15.206.226.160
+          EC2_USER: root
+          EC2_PASSWORD: aruns777389@AKL
+        run: |
+          sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
+            sudo npm install -g pm2
+          "
+
+      # Step 9: Start the Application with PM2 on EC2
+      - name: Start Backend with PM2
+        env:
+          EC2_HOST: 15.206.226.160
+          EC2_USER: root
+          EC2_PASSWORD: aruns777389@AKL
+        run: |
+          sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
+            cd /home/admin/web/zyk.li/public_html/backend &&
+            pm2 start ecosystem.config.js --env production
+          "
+
+      # Step 10: Save PM2 Process List and Enable PM2 Startup Script
+      - name: Enable PM2 startup
+        env:
+          EC2_HOST: 15.206.226.160
+          EC2_USER: root
+          EC2_PASSWORD: aruns777389@AKL
+        run: |
+          sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
+            pm2 save &&
+            pm2 startup systemd -u $EC2_USER --hp /home/$EC2_USER
+          "
+
+      # Step 11: Clean up unused files on EC2 (Optional)
+      - name: Clean up unused files
+        env:
+          EC2_HOST: 15.206.226.160
+          EC2_USER: root
+          EC2_PASSWORD: aruns777389@AKL
+        run: |
+          sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
+            cd /home/admin/web/zyk.li/public_html/backend &&
+            rm -rf .git
+          "
