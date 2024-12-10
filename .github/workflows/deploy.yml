@@ -1,0 +1,62 @@
+name: Deploy to EC2 zykli backend
+
+on: 
+  push:
+    branches: 
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout Source  
+        uses: actions/checkout@v4
+
+      # Step 2: Setup Node.js
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+            node-version: 20
+
+      # Step 3: Install dependencies locally (optional)
+      - name: Install Dependencies
+        run: npm ci
+
+      # Step 4: Transfer backend files to the EC2 server
+      - name: Upload to EC2 Backend
+        env:
+          EC2_HOST: 15.206.226.160
+          EC2_USER: root
+          EC2_PASSWORD: aruns777389@AKL
+        run: |
+          sudo apt-get update && sudo apt-get install -y sshpass
+          sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "mkdir -p /home/admin/web/zyk.li/public_html/backend"
+          sshpass -p "$EC2_PASSWORD" scp -o StrictHostKeyChecking=no -r * $EC2_USER@$EC2_HOST:/home/admin/web/zyk.li/public_html/backend/
+
+      # Step 5: Install dependencies on the EC2 server
+      - name: Install Backend Dependencies on EC2
+        env:
+          EC2_HOST: 15.206.226.160
+          EC2_USER: root
+          EC2_PASSWORD: aruns777389@AKL
+        run: |
+          sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
+            cd /home/admin/web/zyk.li/public_html/backend && 
+            npm ci
+          "
+
+      # Step 6: Start or Restart Backend with PM2
+      - name: Start/Restart Backend with PM2
+        env:
+          EC2_HOST: 15.206.226.160
+          EC2_USER: root
+          EC2_PASSWORD: aruns777389@AKL
+        run: |
+          sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
+            cd /home/admin/web/zyk.li/public_html/backend && 
+            pm2 startOrRestart server.js --name zykli-backend
+          "
