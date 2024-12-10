@@ -32,16 +32,11 @@ jobs:
           rm -rf node_modules
           rm -f package-lock.json
 
-      # Step 5: Remove the conflicting mime file (if exists)
-      - name: Remove Conflicting mime File
-        run: |
-          rm -f node_modules/.bin/mime
-
-      # Step 6: Install dependencies
+      # Step 5: Install dependencies using npm install
       - name: Install Dependencies
-        run: npm ci --verbose
+        run: npm install --verbose
 
-      # Step 7: Transfer backend files to the EC2 server
+      # Step 6: Transfer backend files to the EC2 server
       - name: Upload to EC2 Backend
         env:
           EC2_HOST: 15.206.226.160
@@ -52,7 +47,7 @@ jobs:
           sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "mkdir -p /home/admin/web/zyk.li/public_html/backend"
           sshpass -p "$EC2_PASSWORD" scp -o StrictHostKeyChecking=no -r * $EC2_USER@$EC2_HOST:/home/admin/web/zyk.li/public_html/backend/
 
-      # Step 8: Install Backend Dependencies on EC2
+      # Step 7: Install Backend Dependencies on EC2
       - name: Install Backend Dependencies on EC2
         env:
           EC2_HOST: 15.206.226.160
@@ -61,11 +56,10 @@ jobs:
         run: |
           sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
             cd /home/admin/web/zyk.li/public_html/backend && 
-            rm -f node_modules/.bin/mime &&  # Remove mime file if still present
-            npm ci --production --force
+            npm install --production
           "
 
-      # Step 9: Start/Restart Backend with PM2
+      # Step 8: Start/Restart Backend with PM2
       - name: Start/Restart Backend with PM2
         env:
           EC2_HOST: 15.206.226.160
