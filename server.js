@@ -370,6 +370,15 @@ app.get('/api/redirect/:shortUrl', (req, res) => {
   });
 });
 
+// Get all urls
+app.get('/api/urls', authenticateToken, (req, res) => {
+  db.query('SELECT * FROM urls WHERE user_id = ?', [req.userId], (err, results) => {
+    if (err) {
+      return res.status(500).json({ message: 'Error fetching plans', error: err });
+    }
+    res.json(results);
+  });
+});
 
 // Razorpay payment order creation
 app.post('/api/create-order',authenticateToken, (req, res) => {
