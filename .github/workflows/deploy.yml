@@ -81,7 +81,7 @@ jobs:
         run: |
           sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
             cd /home/admin/web/api.zyk.li/public_html &&
-            pm2 start ecosystem.config.js --env production
+            pm2 start npm --name 'zykli-backend' -- start --production
           "
 
       # Step 10: Save PM2 Process List and Enable PM2 Startup Script
