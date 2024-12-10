@@ -21,6 +21,9 @@ const port = process.env.PORT ||3000;
 app.get('/', (req, res) => {
     res.send('Hello World');
 });
+app.get('/p', (req, res) => {
+  res.send('Hello World p');
+});
 // Middleware
 app.use(bodyParser.json());
 app.use(cors());
