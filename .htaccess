@@ -1,0 +1,8 @@
+RewriteEngine On
+
+# Proxy all requests to localhost:3000, preserving the path and query string
+RewriteRule ^(.*)$ http://localhost:3000/$1 [P,L,QSA]
+
+# Ensure the X-Forwarded-Proto header is set to https when using HTTPS
+SetEnvIf X-Forwarded-Proto https HTTPS
+RequestHeader set X-Forwarded-Proto "https" env=HTTPS
