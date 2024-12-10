@@ -15,10 +15,12 @@ dotenv.config({ path: path.resolve(__dirname, '.env') });
 // Load environment-specific settings (local or production)
 const envFile = `.env.${process.env.NODE_ENV || 'local'}`;
 dotenv.config({ path: path.resolve(__dirname, envFile) });
-
 const app = express();
-const port = process.env.PORT ||6000;
+const port = process.env.PORT ||3000;
 
+app.get('/', (req, res) => {
+    res.send('Hello World');
+});
 // Middleware
 app.use(bodyParser.json());
 app.use(cors());
