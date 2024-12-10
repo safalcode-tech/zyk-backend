@@ -6,7 +6,15 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const bodyParser = require('body-parser');
 const cors = require('cors');
-require('dotenv').config();
+
+const path = require('path');
+const dotenv = require('dotenv');
+// Load common settings from `.env`
+dotenv.config({ path: path.resolve(__dirname, '.env') });
+
+// Load environment-specific settings (local or production)
+const envFile = `.env.${process.env.NODE_ENV || 'local'}`;
+dotenv.config({ path: path.resolve(__dirname, envFile) });
 
 const app = express();
 const port = 5000;
