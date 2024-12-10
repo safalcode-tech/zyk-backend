@@ -24,14 +24,7 @@ app.use(bodyParser.json());
 app.use(cors());
 
 // MySQL connection
-const db = mysql.createConnection({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  connectTimeout: 10000,
-  connectionLimit: 10
-});
+const db = require('./db');
 
 // Razorpay initialization
 const razorpay = new Razorpay({
@@ -244,67 +237,6 @@ app.post('/api/shorten-url', authenticateToken, (req, res) => {
   );
 });
 
-// app.post('/api/shorten-url', authenticateToken, (req, res) => {
-//   const { url } = req.body;
-
-//   // Check if the user has an active plan and its validity
-//   db.query(
-//     'SELECT ap.expiration_date, mp.url_limit FROM active_plans ap \
-//      INNER JOIN membership_plans mp ON ap.plan_id = mp.plan_id \
-//      WHERE ap.user_id = ? ORDER BY ap.activation_date DESC LIMIT 1',
-//     [req.userId],
-//     (err, activePlanResults) => {
-//       if (err || activePlanResults.length === 0) {
-//         return res.status(403).json({ message: 'You don\'t have an active plan. Please upgrade your plan.' });
-//       }
-
-//       const { expiration_date, url_limit } = activePlanResults[0];
-//       const currentDate = new Date();
-//       const expirationDate = new Date(expiration_date);
-
-//       // Check if the active plan has expired
-//       if (expirationDate < currentDate) {
-//         return res.status(403).json({ message: 'Your plan has expired. Please upgrade your plan.' });
-//       }
-
-//       // Check the number of URLs the user has already shortened under their current plan
-//       db.query(
-//         'SELECT COUNT(ul.user_id) AS url_count FROM urls ul \
-//          WHERE ul.user_id = ?',
-//         [req.userId],
-//         (err, urlCountResults) => {
-//           if (err || urlCountResults.length === 0) {
-//             return res.status(500).json({ message: 'Error fetching user URL data' });
-//           }
-
-//           const { url_count } = urlCountResults[0];
-//           // Ensure the user hasn't reached their URL limit
-//           if (url_count >= url_limit) {
-//             return res.status(403).json({ message: 'URL limit reached. Upgrade your plan to shorten more URLs.' });
-//           }
-
-//           // If the user has an active plan and has not exceeded the URL limit, generate the shortened URL
-//           const shortenedUrl = crypto.randomBytes(4).toString('hex');
-
-//           // Insert the new shortened URL into the database
-//           db.query(
-//             'INSERT INTO urls (original_url, shortened_url, user_id) VALUES (?, ?, ?)',
-//             [url, shortenedUrl, req.userId],
-//             (err, result) => {
-//               if (err) {
-//                 return res.status(500).json({ message: 'Error shortening URL' });
-//               }
-//               res.json({ shortenedUrl });
-//             }
-//           );
-//         }
-//       );
-//     }
-//   );
-// });
-
-
-// Upgrade plan
 app.post('/api/upgrade-plan', authenticateToken, (req, res) => {
   const { planId, daysActive } = req.body;  // daysActive should be passed in the request body
 
@@ -409,51 +341,6 @@ app.get('/api/membership-plan', authenticateToken, (req, res) => {
 });
 
 
-
-// app.get('/api/membership-plan', authenticateToken, (req, res) => {
-//   db.query(
-//     'SELECT mp.name, mp.url_limit, COUNT(ul.user_id) AS url_count, ap.activation_date, ap.expiration_date \
-//      FROM membership_plans mp \
-//      INNER JOIN active_plans ap ON ap.plan_id = mp.plan_id \
-//      INNER JOIN users u ON ap.user_id = u.user_id \
-//      LEFT JOIN urls ul ON ul.user_id = u.user_id \
-//      WHERE u.user_id = ? \
-//      GROUP BY mp.name, mp.url_limit, ap.activation_date, ap.expiration_date',
-//     [req.userId],
-//     (err, results) => {
-//       if (err) {
-//         return res.status(500).json({ message: 'Error fetching plan details', error: err });
-//       }
-
-//       if (results.length === 0) {
-//         return res.status(404).json({ message: 'No membership plan found for the user' });
-//       }
-
-//       const { name, url_limit, url_count, activation_date, expiration_date } = results[0];
-
-//       // If there's no active plan or expired plan, handle appropriately
-//       if (!activation_date || !expiration_date || new Date(expiration_date) < new Date()) {
-//         return res.status(403).json({ message: 'Your plan has expired or there is no active plan. Please upgrade your plan.' });
-//       }
-
-//       // Calculate remaining days and URLs
-//       const daysRemaining = Math.floor((new Date(expiration_date) - new Date()) / (1000 * 60 * 60 * 24));  // Calculate remaining days
-//       const urlsRemaining = url_limit - url_count;
-
-//       res.json({
-//         planName: name,
-//         urlLimit: url_limit,
-//         urlsRemaining,
-//         activationDate: activation_date,
-//         expirationDate: expiration_date,
-//         daysRemaining
-//       });
-//     }
-//   );
-// });
-
-
-// Fetch all membership plans
 app.get('/api/plans', (req, res) => {
   db.query('SELECT * FROM membership_plans', (err, results) => {
     if (err) {
