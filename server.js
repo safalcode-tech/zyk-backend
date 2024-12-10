@@ -17,7 +17,7 @@ const envFile = `.env.${process.env.NODE_ENV || 'local'}`;
 dotenv.config({ path: path.resolve(__dirname, envFile) });
 
 const app = express();
-const port = 5000;
+const port = process.env.PORT ||6000;
 
 // Middleware
 app.use(bodyParser.json());
