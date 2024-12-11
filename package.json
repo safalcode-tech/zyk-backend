@@ -11,15 +11,17 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "axios": "^1.7.9",
     "bcryptjs": "^2.4.3",
     "body-parser": "^1.20.3",
+    "cheerio": "^1.0.0",
     "cors": "^2.8.5",
     "crypto": "^1.0.1",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "jsonwebtoken": "^8.5.1",
     "jwt-simple": "^0.5.6",
     "mysql2": "^3.11.5",
-    "jsonwebtoken": "^8.5.1",
     "razorpay": "^2.9.5"
   }
 }

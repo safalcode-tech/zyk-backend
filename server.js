@@ -9,6 +9,10 @@ const cors = require('cors');
 
 const path = require('path');
 const dotenv = require('dotenv');
+
+const axios = require('axios');
+const cheerio = require('cheerio');
+
 // Load common settings from `.env`
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
@@ -535,7 +539,25 @@ app.post('/api/verify-payment', authenticateToken, (req, res) => {
   }
 });
 
-
+app.get('/api/meta-data', async (req, res) => {
+  const { url } = req.query;
+  
+  try {
+    const response = await axios.get(url);
+    const $ = cheerio.load(response.data);
+    
+    const metaData = {
+      title: $('meta[property="og:title"]').attr('content') || 'Default Title',
+      description: $('meta[property="og:description"]').attr('content') || 'Default Description',
+      image: $('meta[property="og:image"]').attr('content') || 'default-image-url',
+    };
+    
+    res.json(metaData);
+  } catch (error) {
+    console.error('Error fetching meta data', error);
+    res.status(500).json({});
+  }
+});
 
 // Start server
 app.listen(port, () => {
