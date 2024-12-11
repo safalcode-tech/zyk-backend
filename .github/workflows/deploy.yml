@@ -17,11 +17,11 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
-      # Step 2: Setup Node.js
+      # Step 2: Setup Node.js (using version 18)
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 18  # Use Node.js v18
 
       # Step 3: Clear npm cache
       - name: Clear npm cache
@@ -59,8 +59,8 @@ jobs:
             cd /home/admin/web/api.zyk.li/public_html &&
             rm -rf node_modules &&
             rm -f package-lock.json &&
-            # Install Node.js v16 or higher on the EC2 instance
-            curl -sL https://deb.nodesource.com/setup_16.x | sudo -E bash - &&
+            # Install Node.js v18 on the EC2 instance
+            curl -sL https://deb.nodesource.com/setup_18.x | sudo -E bash - &&
             sudo apt-get install -y nodejs &&
             npm install --force --production --verbose
           "
@@ -73,7 +73,7 @@ jobs:
           EC2_PASSWORD: aruns777389@AKL
         run: |
           sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
-            sudo npm install -g pm2
+            sudo npm install -g pm2 --force
           "
 
       # Step 9: Start the Application with PM2 on EC2
@@ -85,7 +85,7 @@ jobs:
         run: |
           sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
             cd /home/admin/web/api.zyk.li/public_html &&
-            pm2 start ecosystem.config.js --env production
+            pm2 start ecosystem.config.js --env production --force
           "
 
       # Step 10: Save PM2 Process List and Enable PM2 Startup Script
@@ -96,8 +96,8 @@ jobs:
           EC2_PASSWORD: aruns777389@AKL
         run: |
           sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
-            pm2 save &&
-            pm2 startup systemd -u $EC2_USER --hp /home/$EC2_USER
+            pm2 save --force &&
+            pm2 startup systemd -u $EC2_USER --hp /home/$EC2_USER --force
           "
 
       # Step 11: Clean up unused files on EC2 (Optional)
@@ -109,5 +109,5 @@ jobs:
         run: |
           sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
             cd /home/admin/web/api.zyk.li/public_html &&
-            rm -rf .git
+            rm -rf .git --force
           "
