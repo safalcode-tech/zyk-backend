@@ -1,112 +1,3 @@
-# name: Deploy to EC2 zykli backend
-
-# on:
-#   push:
-#     branches:
-#       - main
-
-# permissions:
-#   contents: read
-
-# jobs:
-#   build-and-deploy:
-#     runs-on: ubuntu-latest
-
-#     steps:
-#       # Step 1: Checkout the repository
-#       - name: Checkout Source
-#         uses: actions/checkout@v4
-
-#       # Step 2: Setup Node.js
-#       - name: Setup Node
-#         uses: actions/setup-node@v4
-#         with:
-#           node-version: 20
-
-#       # Step 3: Clear npm cache
-#       - name: Clear npm cache
-#         run: npm cache clean --force
-
-#       # Step 4: Remove existing node_modules and package-lock.json
-#       - name: Remove existing node_modules and package-lock.json
-#         run: |
-#           rm -rf node_modules
-#           rm -f package-lock.json
-
-#       # Step 5: Install Dependencies Locally
-#       - name: Install Dependencies
-#         run: npm install --production --verbose
-
-#       # Step 6: Transfer backend files to the EC2 server
-#       - name: Upload to EC2 Backend
-#         env:
-#           EC2_HOST: 15.206.226.160
-#           EC2_USER: root
-#           EC2_PASSWORD: aruns777389@AKL
-#         run: |
-#           sudo apt-get update && sudo apt-get install -y sshpass
-#           sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "mkdir -p /home/admin/web/api.zyk.li/public_html"
-#           sshpass -p "$EC2_PASSWORD" rsync -avz --exclude='node_modules' ./ $EC2_USER@$EC2_HOST:/home/admin/web/api.zyk.li/public_html/
-
-#       # Step 7: Clean and Reinstall Dependencies on EC2
-#       - name: Install Backend Dependencies on EC2
-#         env:
-#           EC2_HOST: 15.206.226.160
-#           EC2_USER: root
-#           EC2_PASSWORD: aruns777389@AKL
-#         run: |
-#           sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
-#             cd /home/admin/web/api.zyk.li/public_html &&
-#             rm -rf node_modules &&
-#             npm install --production
-#           "
-
-#       # Step 8: Setup PM2 on EC2 (Install PM2 if not already installed)
-#       - name: Install PM2 on EC2
-#         env:
-#           EC2_HOST: 15.206.226.160
-#           EC2_USER: root
-#           EC2_PASSWORD: aruns777389@AKL
-#         run: |
-#           sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
-#             sudo npm install -g pm2
-#           "
-
-#       # Step 9: Start the Application with PM2 on EC2
-#       - name: Start Backend with PM2
-#         env:
-#           EC2_HOST: 15.206.226.160
-#           EC2_USER: root
-#           EC2_PASSWORD: aruns777389@AKL
-#         run: |
-#           sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
-#             cd /home/admin/web/api.zyk.li/public_html &&
-#             pm2 start ecosystem.config.js --env production
-#           "
-
-#       # Step 10: Save PM2 Process List and Enable PM2 Startup Script
-#       - name: Enable PM2 startup
-#         env:
-#           EC2_HOST: 15.206.226.160
-#           EC2_USER: root
-#           EC2_PASSWORD: aruns777389@AKL
-#         run: |
-#           sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
-#             pm2 save &&
-#             pm2 startup systemd -u $EC2_USER --hp /home/$EC2_USER
-#           "
-
-#       # Step 11: Clean up unused files on EC2 (Optional)
-#       - name: Clean up unused files
-#         env:
-#           EC2_HOST: 15.206.226.160
-#           EC2_USER: root
-#           EC2_PASSWORD: aruns777389@AKL
-#         run: |
-#           sshpass -p "$EC2_PASSWORD" ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST "
-#             cd /home/admin/web/api.zyk.li/public_html &&
-#             rm -rf .git
-#           "
 name: Deploy to EC2 zykli backend
 
 on:
@@ -168,6 +59,9 @@ jobs:
             cd /home/admin/web/api.zyk.li/public_html &&
             rm -rf node_modules &&
             rm -f package-lock.json &&
+            # Install Node.js v16 or higher on the EC2 instance
+            curl -sL https://deb.nodesource.com/setup_16.x | sudo -E bash - &&
+            sudo apt-get install -y nodejs &&
             npm install --force --production --verbose
           "
 
