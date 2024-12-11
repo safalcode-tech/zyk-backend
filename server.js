@@ -47,16 +47,130 @@ const generateApiKey = () => {
 };
 
 // User registration
+// app.post('/api/register', async (req, res) => {
+//   const { username, email, password } = req.body;
+
+//   // Validate required fields
+//   if (!username || !email || !password) {
+//     return res.status(400).json({ message: 'Username, email, and password are required' });
+//   }
+
+//   try {
+//     // Check if username already exists
+//     db.query('SELECT * FROM users WHERE username = ?', [username], (err, result) => {
+//       if (err) {
+//         return res.status(500).json({ message: 'Error checking username', error: err });
+//       }
+//       if (result.length > 0) {
+//         return res.status(400).json({ message: 'Username already exists' });
+//       }
+
+//       // Check if email already exists
+//       db.query('SELECT * FROM users WHERE email = ?', [email], (err, result) => {
+//         if (err) {
+//           return res.status(500).json({ message: 'Error checking email', error: err });
+//         }
+//         if (result.length > 0) {
+//           return res.status(400).json({ message: 'Email already exists' });
+//         }
+
+//         // Hash the password
+//         bcrypt.hash(password, 10, (err, hashedPassword) => {
+//           if (err) {
+//             return res.status(500).json({ message: 'Error hashing password', error: err });
+//           }
+
+//           // Insert user into the 'users' table
+//           db.query(
+//             'INSERT INTO users (username, email, password) VALUES (?, ?, ?)',
+//             [username, email, hashedPassword],
+//             (err, result) => {
+//               if (err) {
+//                 return res.status(500).json({ message: 'Error registering user', error: err });
+//               }
+
+//               // Once the user is created, activate the "Free" plan for the user
+//               const userId = result.insertId; // Get the user ID from the inserted user
+//               const daysActive = 30;
+//               const activationDate = new Date();
+//               const expirationDate = new Date();
+//               expirationDate.setDate(activationDate.getDate() + daysActive);  // Calculate expiration date based on daysActive
+
+//               db.query(
+//                 'INSERT INTO active_plans (user_id, plan_id, activation_date, days_active, expiration_date) VALUES (?, ?, ?, ?, ?)',
+//                 [userId, 1, activationDate, daysActive, expirationDate],
+//                 (err) => {
+//                   if (err) {
+//                     return res.status(500).json({ message: 'Error activating plan', error: err });
+//                   }
+
+//                   res.status(201).json({ message: 'User registered and plan activated successfully' });
+//                 }
+//               );
+//             }
+//           );
+//         });
+//       });
+//     });
+//   } catch (err) {
+//     return res.status(500).json({ message: 'Error registering user', error: err });
+//   }
+// });
+
+
+
+// User login
+// app.post('/api/login', async (req, res) => {
+//   const { email, password } = req.body;
+
+//   if (!email || !password) {
+//     return res.status(400).json({ message: 'Email and password are required' });
+//   }
+
+//   db.query('SELECT * FROM users WHERE email = ?', [email], async (err, users) => {
+//     if (err || users.length === 0) {
+//       return res.status(400).json({ message: 'User not found' });
+//     }
+
+//     const user = users[0];
+//     const isMatch = await bcrypt.compare(password, user.password);
+//     if (!isMatch) {
+//       return res.status(400).json({ message: 'Invalid credentials' });
+//     }
+
+//     // Generate JWT token
+//     const token = jwt.sign({ userId: user.user_id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+//     res.json({ token });
+//   });
+// });
+// User registration route with reCAPTCHA verification
 app.post('/api/register', async (req, res) => {
-  const { username, email, password } = req.body;
+  const { username, email, password, recaptchaToken } = req.body;
 
   // Validate required fields
-  if (!username || !email || !password) {
-    return res.status(400).json({ message: 'Username, email, and password are required' });
+  if (!username || !email || !password || !recaptchaToken) {
+    return res.status(400).json({ message: 'Username, email, password, and recaptcha response are required' });
   }
 
+  // Verify reCAPTCHA
   try {
-    // Check if username already exists
+    const recaptchaVerificationResponse = await axios.post(
+      `https://www.google.com/recaptcha/api/siteverify`,
+      null,
+      {
+        params: {
+          secret: process.env.RECAPTCHA_SECRET_KEY,  // Your reCAPTCHA secret key
+          response: recaptchaToken,
+        },
+      }
+    );
+
+    const { success } = recaptchaVerificationResponse.data;
+    if (!success) {
+      return res.status(400).json({ message: 'reCAPTCHA verification failed' });
+    }
+
+    // Continue with user registration...
     db.query('SELECT * FROM users WHERE username = ?', [username], (err, result) => {
       if (err) {
         return res.status(500).json({ message: 'Error checking username', error: err });
@@ -74,13 +188,12 @@ app.post('/api/register', async (req, res) => {
           return res.status(400).json({ message: 'Email already exists' });
         }
 
-        // Hash the password
+        // Hash the password and insert into the database
         bcrypt.hash(password, 10, (err, hashedPassword) => {
           if (err) {
             return res.status(500).json({ message: 'Error hashing password', error: err });
           }
 
-          // Insert user into the 'users' table
           db.query(
             'INSERT INTO users (username, email, password) VALUES (?, ?, ?)',
             [username, email, hashedPassword],
@@ -89,12 +202,11 @@ app.post('/api/register', async (req, res) => {
                 return res.status(500).json({ message: 'Error registering user', error: err });
               }
 
-              // Once the user is created, activate the "Free" plan for the user
-              const userId = result.insertId; // Get the user ID from the inserted user
+              const userId = result.insertId;
               const daysActive = 30;
               const activationDate = new Date();
               const expirationDate = new Date();
-              expirationDate.setDate(activationDate.getDate() + daysActive);  // Calculate expiration date based on daysActive
+              expirationDate.setDate(activationDate.getDate() + daysActive);
 
               db.query(
                 'INSERT INTO active_plans (user_id, plan_id, activation_date, days_active, expiration_date) VALUES (?, ?, ?, ?, ?)',
@@ -112,36 +224,57 @@ app.post('/api/register', async (req, res) => {
         });
       });
     });
-  } catch (err) {
-    return res.status(500).json({ message: 'Error registering user', error: err });
+  } catch (error) {
+    console.error('reCAPTCHA verification failed', error);
+    return res.status(500).json({ message: 'reCAPTCHA verification failed' });
   }
 });
 
-
-
-// User login
+// User login route (Optional: You can also add reCAPTCHA verification during login)
 app.post('/api/login', async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, recaptchaToken } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required' });
+  if (!email || !password || !recaptchaToken) {
+    return res.status(400).json({ message: 'Email, password, and recaptcha response are required' });
   }
 
-  db.query('SELECT * FROM users WHERE email = ?', [email], async (err, users) => {
-    if (err || users.length === 0) {
-      return res.status(400).json({ message: 'User not found' });
+  try {
+    // Verify reCAPTCHA
+    const recaptchaVerificationResponse = await axios.post(
+      `https://www.google.com/recaptcha/api/siteverify`,
+      null,
+      {
+        params: {
+          secret: process.env.RECAPTCHA_SECRET_KEY,  // Your reCAPTCHA secret key
+          response: recaptchaToken,
+        },
+      }
+    );
+
+    const { success } = recaptchaVerificationResponse.data;
+    if (!success) {
+      return res.status(400).json({ message: 'reCAPTCHA verification failed' });
     }
 
-    const user = users[0];
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid credentials' });
-    }
+    // Continue with user login logic...
+    db.query('SELECT * FROM users WHERE email = ?', [email], async (err, users) => {
+      if (err || users.length === 0) {
+        return res.status(400).json({ message: 'User not found' });
+      }
 
-    // Generate JWT token
-    const token = jwt.sign({ userId: user.user_id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-    res.json({ token });
-  });
+      const user = users[0];
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        return res.status(400).json({ message: 'Invalid credentials' });
+      }
+
+      const token = jwt.sign({ userId: user.user_id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+      res.json({ token });
+    });
+  } catch (error) {
+    console.error('reCAPTCHA verification failed', error);
+    return res.status(500).json({ message: 'reCAPTCHA verification failed' });
+  }
 });
 
 // Middleware to extract token from Authorization header
