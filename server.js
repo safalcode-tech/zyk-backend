@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const nodemailer = require('nodemailer');
 
 const path = require('path');
 const dotenv = require('dotenv');
@@ -25,9 +26,7 @@ const port = process.env.PORT ||3000;
 app.get('/', (req, res) => {
     res.send('Hello World');
 });
-app.get('/p', (req, res) => {
-  res.send('Hello World p');
-});
+
 // Middleware
 app.use(bodyParser.json());
 app.use(cors());
@@ -41,10 +40,90 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET
 });
 
+
+
 // Generate API Key for a user
 const generateApiKey = () => {
   return crypto.randomBytes(32).toString('hex');
 };
+
+
+
+// SMTP configuration
+const transporter = nodemailer.createTransport({
+  host: process.env.MAIL_HOST,
+  port: process.env.MAIL_PORT,
+  secure: true,
+  auth: {
+    user: process.env.MAIL_USERNAME,
+    pass: process.env.MAIL_PASSWORD,
+  },
+});
+
+// Endpoint for contact form submission
+app.post('/api/contact/insert', async (req, res) => {
+  const { name, email, message, recaptchaToken } = req.body;
+
+  // Validate required fields
+  if (!name || !email || !message || !recaptchaToken) {
+    return res.status(400).json({ success: false, message: 'All fields are required.' });
+  }
+
+  // Verify reCAPTCHA
+  try {
+    const recaptchaResponse = await axios.post(
+      'https://www.google.com/recaptcha/api/siteverify',
+      null,
+      {
+        params: {
+          secret: process.env.RECAPTCHA_SECRET_KEY,
+          response: recaptchaToken,
+        },
+      }
+    );
+
+    const { success } = recaptchaResponse.data;
+    if (!success) {
+      return res.status(400).json({ success: false, message: 'reCAPTCHA verification failed.' });
+    }
+  } catch (error) {
+    console.error('Error verifying reCAPTCHA:', error);
+    return res.status(500).json({ success: false, message: 'Error verifying reCAPTCHA.' });
+  }
+
+  // Insert contact into database
+  const query = 'INSERT INTO contacts (name, email, message) VALUES (?, ?, ?)';
+  db.query(query, [name, email, message], (err) => {
+    if (err) {
+      console.error('Error inserting into database:', err);
+      return res.status(500).json({ success: false, message: 'Database error.' });
+    }
+
+    // Send email notification to admin
+    const mailOptions = {
+      from: `${process.env.MAIL_FROM_NAME} <${process.env.MAIL_FROM_EMAIL}>`,
+      to: process.env.ADMIN_EMAIL,
+      subject: 'New Contact Form Submission',
+      html: `
+        <p><strong>Name:</strong> ${name}</p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Message:</strong></p>
+        <p>${message}</p>
+      `,
+    };
+
+    transporter.sendMail(mailOptions, (error, info) => {
+      if (error) {
+        console.error('Error sending email:', error);
+        return res.status(500).json({ success: false, message: 'Failed to send email notification.' });
+      }
+
+      res.status(201).json({ success: true, message: 'Contact form submitted successfully.' });
+    });
+  });
+});
+
+
 
 // User registration route with reCAPTCHA verification
 app.post('/api/register', async (req, res) => {
