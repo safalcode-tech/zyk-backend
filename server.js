@@ -46,103 +46,6 @@ const generateApiKey = () => {
   return crypto.randomBytes(32).toString('hex');
 };
 
-// User registration
-// app.post('/api/register', async (req, res) => {
-//   const { username, email, password } = req.body;
-
-//   // Validate required fields
-//   if (!username || !email || !password) {
-//     return res.status(400).json({ message: 'Username, email, and password are required' });
-//   }
-
-//   try {
-//     // Check if username already exists
-//     db.query('SELECT * FROM users WHERE username = ?', [username], (err, result) => {
-//       if (err) {
-//         return res.status(500).json({ message: 'Error checking username', error: err });
-//       }
-//       if (result.length > 0) {
-//         return res.status(400).json({ message: 'Username already exists' });
-//       }
-
-//       // Check if email already exists
-//       db.query('SELECT * FROM users WHERE email = ?', [email], (err, result) => {
-//         if (err) {
-//           return res.status(500).json({ message: 'Error checking email', error: err });
-//         }
-//         if (result.length > 0) {
-//           return res.status(400).json({ message: 'Email already exists' });
-//         }
-
-//         // Hash the password
-//         bcrypt.hash(password, 10, (err, hashedPassword) => {
-//           if (err) {
-//             return res.status(500).json({ message: 'Error hashing password', error: err });
-//           }
-
-//           // Insert user into the 'users' table
-//           db.query(
-//             'INSERT INTO users (username, email, password) VALUES (?, ?, ?)',
-//             [username, email, hashedPassword],
-//             (err, result) => {
-//               if (err) {
-//                 return res.status(500).json({ message: 'Error registering user', error: err });
-//               }
-
-//               // Once the user is created, activate the "Free" plan for the user
-//               const userId = result.insertId; // Get the user ID from the inserted user
-//               const daysActive = 30;
-//               const activationDate = new Date();
-//               const expirationDate = new Date();
-//               expirationDate.setDate(activationDate.getDate() + daysActive);  // Calculate expiration date based on daysActive
-
-//               db.query(
-//                 'INSERT INTO active_plans (user_id, plan_id, activation_date, days_active, expiration_date) VALUES (?, ?, ?, ?, ?)',
-//                 [userId, 1, activationDate, daysActive, expirationDate],
-//                 (err) => {
-//                   if (err) {
-//                     return res.status(500).json({ message: 'Error activating plan', error: err });
-//                   }
-
-//                   res.status(201).json({ message: 'User registered and plan activated successfully' });
-//                 }
-//               );
-//             }
-//           );
-//         });
-//       });
-//     });
-//   } catch (err) {
-//     return res.status(500).json({ message: 'Error registering user', error: err });
-//   }
-// });
-
-
-
-// User login
-// app.post('/api/login', async (req, res) => {
-//   const { email, password } = req.body;
-
-//   if (!email || !password) {
-//     return res.status(400).json({ message: 'Email and password are required' });
-//   }
-
-//   db.query('SELECT * FROM users WHERE email = ?', [email], async (err, users) => {
-//     if (err || users.length === 0) {
-//       return res.status(400).json({ message: 'User not found' });
-//     }
-
-//     const user = users[0];
-//     const isMatch = await bcrypt.compare(password, user.password);
-//     if (!isMatch) {
-//       return res.status(400).json({ message: 'Invalid credentials' });
-//     }
-
-//     // Generate JWT token
-//     const token = jwt.sign({ userId: user.user_id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-//     res.json({ token });
-//   });
-// });
 // User registration route with reCAPTCHA verification
 app.post('/api/register', async (req, res) => {
   const { username, email, password, recaptchaToken } = req.body;
@@ -360,8 +263,7 @@ app.post('/api/shorten-url', authenticateToken, (req, res) => {
           }
 
           // If the user has an active plan and has not exceeded the limits, generate the shortened URL
-          const shortenedUrl = crypto.randomBytes(4).toString('hex');
-
+          const shortenedUrl = crypto.randomBytes(4).toString('hex').slice(0, 7);
           // Insert the new shortened URL into the database
           db.query(
             'INSERT INTO urls (original_url, shortened_url, user_id) VALUES (?, ?, ?)',
