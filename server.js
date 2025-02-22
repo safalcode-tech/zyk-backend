@@ -23,6 +23,17 @@ dotenv.config({ path: path.resolve(__dirname, envFile) });
 const app = express();
 const port = process.env.PORT ||3000;
 
+
+// Cashfree API Credentials (from .env file)
+const CASHFREE_APP_ID = process.env.CASHFREE_APP_ID;
+const CASHFREE_SECRET_KEY = process.env.CASHFREE_SECRET_KEY;
+const CASHFREE_ENV = process.env.CASHFREE_ENV || "TEST"; // TEST or PROD
+
+const BASE_URL =
+  CASHFREE_ENV === "TEST"
+    ? "https://sandbox.cashfree.com/pg/orders"
+    : "https://api.cashfree.com/pg/orders";
+
 app.get('/', (req, res) => {
     res.send('Hello World');
 });
@@ -34,19 +45,14 @@ app.use(cors());
 // MySQL connection
 const db = require('./db');
 
-// Razorpay initialization
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET
-});
-
-
-
 // Generate API Key for a user
 const generateApiKey = () => {
   return crypto.randomBytes(32).toString('hex');
 };
-
+// Start server
+app.listen(port, () => {
+  console.log(`Server running at http://localhost:${port}`);
+});
 
 
 // SMTP configuration
@@ -59,6 +65,330 @@ const transporter = nodemailer.createTransport({
     pass: process.env.MAIL_PASSWORD,
   },
 });
+// Middleware to extract token from Authorization header
+const authenticateToken = (req, res, next) => {
+  const token = req.headers['authorization']?.split(' ')[1]; // Extract token from header
+
+  if (!token) {
+    return res.status(401).json({ message: 'Token is required' });
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
+    req.userId = decoded.userId;  // Attach userId to request
+    next();
+  });
+};
+
+
+
+app.post('/api/upgrade-plan', authenticateToken, (req, res) => {
+  const { planId, daysActive } = req.body;  // daysActive should be passed in the request body
+
+  db.query('SELECT * FROM membership_plans WHERE plan_id = ?', [planId], (err, plans) => {
+    if (err || plans.length === 0) {
+      return res.status(404).json({ message: 'Plan not found' });
+    }
+
+    const plan = plans[0];
+    const activationDate = new Date();
+    const expirationDate = new Date();
+    expirationDate.setDate(activationDate.getDate() + daysActive);  // Calculate expiration date based on daysActive
+
+    // Insert into the active_plans table
+    db.query(
+      'INSERT INTO active_plans (user_id, plan_id, activation_date, days_active, expiration_date) VALUES (?, ?, ?, ?, ?)',
+      [req.userId, planId, activationDate, daysActive, expirationDate],
+      (err, result) => {
+        if (err) {
+          return res.status(500).json({ message: 'Error updating membership plan', error: err });
+        }
+
+        // Update the user's plan in the users table
+        db.query(
+          'UPDATE users SET membership_plan_id = ? WHERE user_id = ?',
+          [planId, req.userId],
+          (err, result) => {
+            if (err) {
+              return res.status(500).json({ message: 'Error updating user plan' });
+            }
+            res.json({ message: `Plan upgraded to ${plan.name}`, plan });
+          }
+        );
+      }
+    );
+  });
+});
+
+//Get Active Membership plan
+app.get('/api/membership-plan', authenticateToken, (req, res) => {
+  db.query(
+    `SELECT 
+        mp.name,
+        mp.url_limit,  -- Monthly URL limit
+        mp.daily_url_limit,  -- Daily URL limit
+        COUNT(CASE WHEN DATE(ul.created_at) = CURDATE() THEN ul.user_id END) AS url_count_today,  -- Today's URL count
+        COUNT(CASE WHEN MONTH(ul.created_at) = MONTH(CURDATE()) AND YEAR(ul.created_at) = YEAR(CURDATE()) THEN ul.user_id END) AS url_count_month,  -- This month's URL count
+        ap.activation_date,
+        ap.expiration_date
+    FROM 
+        membership_plans mp
+    INNER JOIN 
+        active_plans ap ON ap.plan_id = mp.plan_id
+    INNER JOIN 
+        users u ON ap.user_id = u.user_id
+    LEFT JOIN 
+        urls ul ON ul.user_id = u.user_id
+    WHERE 
+        u.user_id = ?
+    GROUP BY 
+        mp.name, mp.url_limit, mp.daily_url_limit, ap.activation_date, ap.expiration_date`,
+    [req.userId],
+    (err, results) => {
+      if (err) {
+        return res.status(500).json({ message: 'Error fetching plan details', error: err });
+      }
+
+      if (results.length === 0) {
+        return res.status(404).json({ message: 'No membership plan found for the user' });
+      }
+
+      const { name, url_limit, daily_url_limit, url_count_today, url_count_month, activation_date, expiration_date } = results[0];
+
+      // If there's no active plan or expired plan, handle appropriately
+      if (!activation_date || !expiration_date || new Date(expiration_date) < new Date()) {
+        return res.status(403).json({ message: 'Your plan has expired or there is no active plan. Please upgrade your plan.' });
+      }
+
+      // Calculate remaining days and URLs for the user
+      const daysRemaining = Math.floor((new Date(expiration_date) - new Date()) / (1000 * 60 * 60 * 24));  // Calculate remaining days
+
+      // Calculate the monthly limit and daily limit
+      const monthlyLimit = url_limit;  // Monthly URL limit (from the database)
+      const dailyLimit = daily_url_limit;  // Daily URL limit (from the database)
+      
+      // Calculate remaining URLs today and for the month
+      const urlsRemainingToday = Math.max(dailyLimit - url_count_today, 0);  // Remaining URLs for today
+      const urlsRemainingMonth = Math.max(monthlyLimit - url_count_month, 0);  // Remaining URLs for the month
+
+      res.json({
+        planName: name,
+        urlLimit: monthlyLimit,  // Monthly URL limit
+        dailyUrlLimit: dailyLimit,  // Daily URL limit
+        urlsRemainingToday,  // Remaining URLs for today
+        urlsRemainingMonth,  // Remaining URLs for the month
+        activationDate: activation_date,
+        expirationDate: expiration_date,
+        daysRemaining
+      });
+    }
+  );
+});
+
+
+app.get('/api/plans', (req, res) => {
+  db.query('SELECT * FROM membership_plans', (err, results) => {
+    if (err) {
+      return res.status(500).json({ message: 'Error fetching plans', error: err });
+    }
+    res.json(results);
+  });
+});
+
+// Cashfree: Create Payment Order
+app.post('/api/create-order', authenticateToken, async (req, res) => {
+  try {
+    const { amount, user_id } = req.body;
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-client-id': CASHFREE_APP_ID,
+      'x-client-secret': CASHFREE_SECRET_KEY,
+      'x-api-version': '2022-09-01',
+    };
+
+    const orderPayload = {
+      order_id: `ORDER_${Date.now()}`,
+      order_amount: Number(amount).toFixed(2),
+      order_currency: 'INR',
+      customer_details: {
+        customer_id: "12",
+        customer_email: "arun1601for@gmail.com",
+        customer_phone: "9226889662",
+      },
+      order_meta: {
+        return_url: `${process.env.PUBLIC_URL}/plans?order_id={order_id}`,
+        notify_url: `${process.env.PUBLIC_URL}/api/payment-webhook`
+      }
+    };
+
+    const response = await axios.post(BASE_URL, orderPayload, { headers });
+    if (response.data && response.data.payments.url) {
+      // Store payment details in database
+      db.query(
+        'INSERT INTO payments (order_id, user_id, amount, payment_status, created_at) VALUES (?, ?, ?, ?, ?)',
+        [response.data.order_id, req.userId, amount, 'pending', new Date()],
+        (err) => {
+          if (err) {
+            return res.status(500).json({ message: 'Error saving payment details', error: err });
+          }
+          res.json(response.data);
+        }
+      );
+    } else {
+      res.status(500).json({ message: 'Error creating payment order 3', error: response.data });
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Error creating payment order', error: error.message });
+  }
+});
+
+// Cashfree: Payment Verification
+app.post('/api/verify-payment', authenticateToken, async (req, res) => {
+  try {
+    // Expect these fields from the client:
+    // orderId: Your merchant's order ID returned by Cashfree
+    // planId: The membership plan identifier
+    // daysActive: Number of days for the plan
+    // amount: Payment amount
+    const { orderId, planId, daysActive, amount } = req.body;
+    const userId = req.userId; // from authentication middleware
+
+    // Prepare headers for Cashfree API call.
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-client-id': CASHFREE_APP_ID,
+      'x-client-secret': CASHFREE_SECRET_KEY,
+      'x-api-version': '2022-09-01',
+    };
+
+    // Call Cashfree API to retrieve order details.
+    const response = await axios.get(`${BASE_URL}/${orderId}`, { headers });
+
+    // Check if the order status is PAID.
+    if (response.data && response.data.order_status === 'PAID') {
+      // Calculate activation and expiration dates.
+      const activationDate = new Date();
+      const expirationDate = new Date();
+      expirationDate.setDate(activationDate.getDate() + Number(daysActive));
+
+      // Check for an existing active plan for this user.
+      db.query(
+        'SELECT * FROM active_plans WHERE user_id = ?',
+        [userId],
+        (err, result) => {
+          if (err) {
+            return res.status(500).json({ message: 'Error checking active plan', error: err });
+          }
+
+          if (result.length > 0) {
+            // There is an existing active plan.
+            const activePlan = result[0];
+            if (new Date(activePlan.expiration_date) <= new Date()) {
+              // Plan has expired: update the record with new plan details.
+              db.query(
+                'UPDATE active_plans SET plan_id = ?, activation_date = ?, expiration_date = ? WHERE user_id = ?',
+                [planId, activationDate, expirationDate, userId],
+                (err) => {
+                  if (err) {
+                    return res.status(500).json({ message: 'Error updating expired active plan', error: err });
+                  }
+                  // Update the payments table using orderId as identifier.
+                  const paymentStatus = 'success';
+                  const createdAt = new Date();
+                  db.query(
+                    'UPDATE payments SET payment_status = ?, created_at = ? WHERE order_id = ?',
+                    [paymentStatus, createdAt, orderId],
+                    (err) => {
+                      if (err) {
+                        return res.status(500).json({ message: 'Error storing payment details', error: err });
+                      }
+                      res.json({ message: 'Payment verified and plan renewed successfully' });
+                    }
+                  );
+                }
+              );
+            } else {
+              // Plan is still active: update the plan details.
+              db.query(
+                'UPDATE active_plans SET plan_id = ?, activation_date = ?, expiration_date = ? WHERE user_id = ?',
+                [planId, activationDate, expirationDate, userId],
+                (err) => {
+                  if (err) {
+                    return res.status(500).json({ message: 'Error updating active plan', error: err });
+                  }
+                  const paymentStatus = 'success';
+                  const createdAt = new Date();
+                  db.query(
+                    'UPDATE payments SET payment_status = ?, created_at = ? WHERE order_id = ?',
+                    [paymentStatus, createdAt, orderId],
+                    (err) => {
+                      if (err) {
+                        return res.status(500).json({ message: 'Error storing payment details', error: err });
+                      }
+                      res.json({ message: 'Payment verified and plan upgraded successfully' });
+                    }
+                  );
+                }
+              );
+            }
+          } else {
+            // No active plan exists: insert a new record.
+            db.query(
+              'INSERT INTO active_plans (user_id, plan_id, activation_date, days_active, expiration_date) VALUES (?, ?, ?, ?, ?)',
+              [userId, planId, activationDate, daysActive, expirationDate],
+              (err) => {
+                if (err) {
+                  return res.status(500).json({ message: 'Error storing active plan details', error: err });
+                }
+                const paymentStatus = 'success';
+                const createdAt = new Date();
+                db.query(
+                  'UPDATE payments SET payment_status = ?, created_at = ? WHERE order_id = ?',
+                  [paymentStatus, createdAt, orderId],
+                  (err) => {
+                    if (err) {
+                      return res.status(500).json({ message: 'Error storing payment details', error: err });
+                    }
+                    res.json({ message: 'Payment verified and plan upgraded successfully' });
+                  }
+                );
+              }
+            );
+          }
+        }
+      );
+    } else {
+      res.status(400).json({ message: 'Payment verification failed', error: response.data });
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Error verifying payment', error: error.message });
+  }
+});
+
+
+
+// Webhook for Payment Notifications (Optional)
+app.post('/api/payment-webhook', (req, res) => {
+  const { order_id, order_status } = req.body;
+
+  if (order_status === 'PAID') {
+    db.query(
+      'UPDATE payments SET payment_status = ? WHERE order_id = ?',
+      ['paid', order_id],
+      (err) => {
+        if (err) {
+          return res.status(500).json({ message: 'Error updating payment status', error: err });
+        }
+      }
+    );
+  }
+  
+  res.status(200).json({ message: 'Webhook received successfully' });
+});
+
 
 // Endpoint for contact form submission
 app.post('/api/contact/insert', async (req, res) => {
@@ -259,22 +589,6 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Middleware to extract token from Authorization header
-const authenticateToken = (req, res, next) => {
-  const token = req.headers['authorization']?.split(' ')[1]; // Extract token from header
-
-  if (!token) {
-    return res.status(401).json({ message: 'Token is required' });
-  }
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(401).json({ message: 'Invalid token' });
-    }
-    req.userId = decoded.userId;  // Attach userId to request
-    next();
-  });
-};
 
 // Generate API key for user after login
 app.post('/api/generate-api-key', authenticateToken, (req, res) => {
@@ -360,119 +674,6 @@ app.post('/api/shorten-url', authenticateToken, (req, res) => {
   );
 });
 
-app.post('/api/upgrade-plan', authenticateToken, (req, res) => {
-  const { planId, daysActive } = req.body;  // daysActive should be passed in the request body
-
-  db.query('SELECT * FROM membership_plans WHERE plan_id = ?', [planId], (err, plans) => {
-    if (err || plans.length === 0) {
-      return res.status(404).json({ message: 'Plan not found' });
-    }
-
-    const plan = plans[0];
-    const activationDate = new Date();
-    const expirationDate = new Date();
-    expirationDate.setDate(activationDate.getDate() + daysActive);  // Calculate expiration date based on daysActive
-
-    // Insert into the active_plans table
-    db.query(
-      'INSERT INTO active_plans (user_id, plan_id, activation_date, days_active, expiration_date) VALUES (?, ?, ?, ?, ?)',
-      [req.userId, planId, activationDate, daysActive, expirationDate],
-      (err, result) => {
-        if (err) {
-          return res.status(500).json({ message: 'Error updating membership plan', error: err });
-        }
-
-        // Update the user's plan in the users table
-        db.query(
-          'UPDATE users SET membership_plan_id = ? WHERE user_id = ?',
-          [planId, req.userId],
-          (err, result) => {
-            if (err) {
-              return res.status(500).json({ message: 'Error updating user plan' });
-            }
-            res.json({ message: `Plan upgraded to ${plan.name}`, plan });
-          }
-        );
-      }
-    );
-  });
-});
-
-//Get Active Membership plan
-app.get('/api/membership-plan', authenticateToken, (req, res) => {
-  db.query(
-    `SELECT 
-        mp.name,
-        mp.url_limit,  -- Monthly URL limit
-        mp.daily_url_limit,  -- Daily URL limit
-        COUNT(CASE WHEN DATE(ul.created_at) = CURDATE() THEN ul.user_id END) AS url_count_today,  -- Today's URL count
-        COUNT(CASE WHEN MONTH(ul.created_at) = MONTH(CURDATE()) AND YEAR(ul.created_at) = YEAR(CURDATE()) THEN ul.user_id END) AS url_count_month,  -- This month's URL count
-        ap.activation_date,
-        ap.expiration_date
-    FROM 
-        membership_plans mp
-    INNER JOIN 
-        active_plans ap ON ap.plan_id = mp.plan_id
-    INNER JOIN 
-        users u ON ap.user_id = u.user_id
-    LEFT JOIN 
-        urls ul ON ul.user_id = u.user_id
-    WHERE 
-        u.user_id = ?
-    GROUP BY 
-        mp.name, mp.url_limit, mp.daily_url_limit, ap.activation_date, ap.expiration_date`,
-    [req.userId],
-    (err, results) => {
-      if (err) {
-        return res.status(500).json({ message: 'Error fetching plan details', error: err });
-      }
-
-      if (results.length === 0) {
-        return res.status(404).json({ message: 'No membership plan found for the user' });
-      }
-
-      const { name, url_limit, daily_url_limit, url_count_today, url_count_month, activation_date, expiration_date } = results[0];
-
-      // If there's no active plan or expired plan, handle appropriately
-      if (!activation_date || !expiration_date || new Date(expiration_date) < new Date()) {
-        return res.status(403).json({ message: 'Your plan has expired or there is no active plan. Please upgrade your plan.' });
-      }
-
-      // Calculate remaining days and URLs for the user
-      const daysRemaining = Math.floor((new Date(expiration_date) - new Date()) / (1000 * 60 * 60 * 24));  // Calculate remaining days
-
-      // Calculate the monthly limit and daily limit
-      const monthlyLimit = url_limit;  // Monthly URL limit (from the database)
-      const dailyLimit = daily_url_limit;  // Daily URL limit (from the database)
-      
-      // Calculate remaining URLs today and for the month
-      const urlsRemainingToday = Math.max(dailyLimit - url_count_today, 0);  // Remaining URLs for today
-      const urlsRemainingMonth = Math.max(monthlyLimit - url_count_month, 0);  // Remaining URLs for the month
-
-      res.json({
-        planName: name,
-        urlLimit: monthlyLimit,  // Monthly URL limit
-        dailyUrlLimit: dailyLimit,  // Daily URL limit
-        urlsRemainingToday,  // Remaining URLs for today
-        urlsRemainingMonth,  // Remaining URLs for the month
-        activationDate: activation_date,
-        expirationDate: expiration_date,
-        daysRemaining
-      });
-    }
-  );
-});
-
-
-app.get('/api/plans', (req, res) => {
-  db.query('SELECT * FROM membership_plans', (err, results) => {
-    if (err) {
-      return res.status(500).json({ message: 'Error fetching plans', error: err });
-    }
-    res.json(results);
-  });
-});
-
 
 // Get original URL and redirect
 app.get('/api/redirect/:shortUrl', (req, res) => {
@@ -498,160 +699,7 @@ app.get('/api/urls', authenticateToken, (req, res) => {
   });
 });
 
-// Razorpay payment order creation
-app.post('/api/create-order',authenticateToken, (req, res) => {
-  const { amount, user_id } = req.body; // Include user_id from the request body
-  const options = {
-    amount: amount * 100, // amount in paise
-    currency: 'INR',
-    receipt: 'order_rcptid_11',
-  };
 
-  razorpay.orders.create(options, (err, order) => {
-    if (err) {
-      return res.status(500).json({ message: 'Error creating Razorpay order' });
-    }
-
-    // Store payment details in the database
-    const paymentData = {
-      payment_id: order.id,
-      user_id: user_id,  // Store the user_id
-      amount: amount,
-      payment_status: 'pending',  // Initially, the payment status is 'pending'
-      created_at: new Date(),
-    };
-
-    db.query(
-      'INSERT INTO payments (payment_id, order_id, user_id, amount, payment_status, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-      [paymentData.payment_id, paymentData.payment_id, req.userId, paymentData.amount, paymentData.payment_status, paymentData.created_at],
-      (err, result) => {
-        if (err) {
-          return res.status(500).json({ message: 'Error saving payment details to database', error: err });
-        }
-        res.json({ order_id: order.id, amount: order.amount / 100 });
-      }
-    );
-  });
-});
-
-// Razorpay payment verification
-app.post('/api/verify-payment', authenticateToken, (req, res) => {
-  const { paymentId, orderId, signature, planId, daysActive } = req.body;
-  const body = `${orderId}|${paymentId}`;
-  const generatedSignature = crypto
-    .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-    .update(body)
-    .digest('hex');
-
-  if (generatedSignature === signature) {
-    const userId = req.userId;  // Ensure the user is authenticated
-
-    // Calculate activation and expiration dates
-    const activationDate = new Date();
-    const expirationDate = new Date();
-    expirationDate.setDate(activationDate.getDate() + daysActive);  // Use daysActive from the request
-
-    // Check if there's an existing active plan or expired plan for the user
-    db.query(
-      'SELECT * FROM active_plans WHERE user_id = ?',
-      [userId],
-      (err, result) => {
-        if (err) {
-          return res.status(500).json({ message: 'Error checking active plan', error: err });
-        }
-
-        if (result.length > 0) {
-          // If there's an active plan, check if it has expired
-          const activePlan = result[0];
-          if (new Date(activePlan.expiration_date) <= new Date()) {
-            // If the plan has expired, update the existing record with new plan details
-            db.query(
-              'UPDATE active_plans SET plan_id = ?, activation_date = ?, expiration_date = ? WHERE user_id = ?',
-              [planId, activationDate, expirationDate, userId],
-              (err) => {
-                if (err) {
-                  return res.status(500).json({ message: 'Error updating expired active plan', error: err });
-                }
-
-                // Store payment details in the payment history table
-                const paymentStatus = 'success';
-                const createdAt = new Date();
-                db.query(
-                  'UPDATE payments SET payment_id = ?, user_id = ?, amount = ?, payment_status = ?, created_at = ? WHERE order_id = ?',
-                  [paymentId, userId, req.body.amount, paymentStatus, createdAt, orderId],
-                  (err) => {
-                    if (err) {
-                      return res.status(500).json({ message: 'Error storing payment details', error: err });
-                    }
-
-                    // Return success message after updating expired plan and payment
-                    res.json({ message: 'Payment verified and plan renewed successfully' });
-                  }
-                );
-              }
-            );
-          } else {
-            // If the plan is still active, just update the plan details
-            db.query(
-              'UPDATE active_plans SET plan_id = ?, activation_date = ?, expiration_date = ? WHERE user_id = ?',
-              [planId, activationDate, expirationDate, userId],
-              (err) => {
-                if (err) {
-                  return res.status(500).json({ message: 'Error updating active plan', error: err });
-                }
-
-                // Store payment details in the payment history table
-                const paymentStatus = 'success';
-                const createdAt = new Date();
-                db.query(
-                  'UPDATE payments SET payment_id = ?, user_id = ?, amount = ?, payment_status = ?, created_at = ? WHERE order_id = ?',
-                  [paymentId, userId, req.body.amount, paymentStatus, createdAt, orderId],
-                  (err) => {
-                    if (err) {
-                      return res.status(500).json({ message: 'Error storing payment details', error: err });
-                    }
-
-                    // Return success message after updating active plan and payment
-                    res.json({ message: 'Payment verified and plan upgraded successfully' });
-                  }
-                );
-              }
-            );
-          }
-        } else {
-          // If no active plan exists, insert a new one
-          db.query(
-            'INSERT INTO active_plans (user_id, plan_id, activation_date, days_active, expiration_date) VALUES (?, ?, ?, ?, ?)',
-            [userId, planId, activationDate, daysActive, expirationDate],
-            (err) => {
-              if (err) {
-                return res.status(500).json({ message: 'Error storing active plan details', error: err });
-              }
-
-              // Store payment details in the payment history table
-              const paymentStatus = 'success';
-              const createdAt = new Date();
-              db.query(
-                'UPDATE payments SET payment_id = ?, user_id = ?, amount = ?, payment_status = ?, created_at = ? WHERE order_id = ?',
-                [paymentId, userId, req.body.amount, paymentStatus, createdAt, orderId],
-                (err) => {
-                  if (err) {
-                    return res.status(500).json({ message: 'Error storing payment details', error: err });
-                  }
-
-                  // Return success message after inserting new active plan and payment
-                  res.json({ message: 'Payment verified and plan upgraded successfully' });
-                }
-              );
-            }
-          );
-        }
-      }
-    );
-  } else {
-    res.status(400).json({ message: 'Payment verification failed' });
-  }
-});
 
 app.get('/api/meta-data', async (req, res) => {
   const { url } = req.query;
@@ -673,7 +721,4 @@ app.get('/api/meta-data', async (req, res) => {
   }
 });
 
-// Start server
-app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
-});
+
