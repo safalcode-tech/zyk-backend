@@ -200,46 +200,67 @@ app.get('/api/plans', (req, res) => {
 // Cashfree: Create Payment Order
 app.post('/api/create-order', authenticateToken, async (req, res) => {
   try {
-    const { amount, user_id } = req.body;
-
-    const headers = {
-      'Content-Type': 'application/json',
-      'x-client-id': CASHFREE_APP_ID,
-      'x-client-secret': CASHFREE_SECRET_KEY,
-      'x-api-version': '2022-09-01',
-    };
-
-    const orderPayload = {
-      order_id: `ORDER_${Date.now()}`,
-      order_amount: Number(amount).toFixed(2),
-      order_currency: 'INR',
-      customer_details: {
-        customer_id: "12",
-        customer_email: "arun1601for@gmail.com",
-        customer_phone: "9226889662",
-      },
-      order_meta: {
-        return_url: `${process.env.PUBLIC_URL}/plans?order_id={order_id}`,
-        notify_url: `${process.env.PUBLIC_URL}/api/payment-webhook`
+    const { amount, daysActive,planId ,duration} = req.body;
+    let userId = req.userId.toString();
+    let userData = null;
+    db.query('SELECT * FROM users WHERE user_id = ?', [userId], async (err, result) => {
+      if (err) {
+        return res.status(500).json({ message: 'Error checking userId', error: err });
       }
-    };
+      if (result.length > 0) {
+        const userData = result[0]; // Get the first user (assuming user_id is unique)
+//////////////////////////////////////////////////////
+const headers = {
+  'Content-Type': 'application/json',
+  'x-client-id': CASHFREE_APP_ID,
+  'x-client-secret': CASHFREE_SECRET_KEY,
+  'x-api-version': '2022-09-01',
+};
 
-    const response = await axios.post(BASE_URL, orderPayload, { headers });
-    if (response.data && response.data.payments.url) {
-      // Store payment details in database
-      db.query(
-        'INSERT INTO payments (order_id, user_id, amount, payment_status, created_at) VALUES (?, ?, ?, ?, ?)',
-        [response.data.order_id, req.userId, amount, 'pending', new Date()],
-        (err) => {
-          if (err) {
-            return res.status(500).json({ message: 'Error saving payment details', error: err });
-          }
-          res.json(response.data);
-        }
-      );
-    } else {
-      res.status(500).json({ message: 'Error creating payment order 3', error: response.data });
+const orderPayload = {
+  order_id: `ORDER_${Date.now()}`,
+  order_amount: Number(amount).toFixed(2),
+  order_currency: 'INR',
+  customer_details: {
+    customer_id: `${userId}`,
+    customer_email: `${userData.email}`,
+    customer_phone: `${userData.mobile}`,
+  },
+  order_meta: {
+    return_url: `${process.env.PUBLIC_URL}/plans?order_id={order_id}`,
+    notify_url: `${process.env.API_URL}/api/payment-webhook`
+  },
+  order_tags: {
+    planId: `${planId}`,
+    daysActive: `${daysActive}`,
+    duration: `${duration}`
+  },
+
+};
+
+const response = await axios.post(BASE_URL, orderPayload, { headers });
+if (response.data && response.data.payments.url) {
+  // Store payment details in database
+  db.query(
+    'INSERT INTO payments (order_id, user_id, amount, payment_status, created_at) VALUES (?, ?, ?, ?, ?)',
+    [response.data.order_id, req.userId, amount, 'pending', new Date()],
+    (err) => {
+      if (err) {
+        return res.status(500).json({ message: 'Error saving payment details', error: err });
+      }
+      res.json(response.data);
     }
+  );
+} else {
+  res.status(500).json({ message: 'Error creating payment order 3', error: response.data });
+}
+/////////////////////////////////////////////////////
+      } else {
+        console.log('No user found');
+      }
+    });
+    
+
   } catch (error) {
     res.status(500).json({ message: 'Error creating payment order', error: error.message });
   }
@@ -253,6 +274,7 @@ app.post('/api/verify-payment', authenticateToken, async (req, res) => {
     // planId: The membership plan identifier
     // daysActive: Number of days for the plan
     // amount: Payment amount
+    console.log(req.body);
     const { orderId, planId, daysActive, amount } = req.body;
     const userId = req.userId; // from authentication middleware
 
@@ -372,22 +394,157 @@ app.post('/api/verify-payment', authenticateToken, async (req, res) => {
 
 // Webhook for Payment Notifications (Optional)
 app.post('/api/payment-webhook', (req, res) => {
-  const { order_id, order_status } = req.body;
+  const order = req.body.data.order;
+  const order_tags = req.body.data.order.order_tags;
+  const payment = req.body.data.payment;
+  const customer_details = req.body.data.customer_details;
+  const userId = customer_details.customer_id; 
 
-  if (order_status === 'PAID') {
-    db.query(
-      'UPDATE payments SET payment_status = ? WHERE order_id = ?',
-      ['paid', order_id],
-      (err) => {
-        if (err) {
-          return res.status(500).json({ message: 'Error updating payment status', error: err });
-        }
-      }
-    );
+  const planId = order_tags.planId;
+  const orderId = order.order_id;
+  const amount = payment.payment_amount;
+
+  // console.log(req.body.data);
+  const activationDate = new Date();
+  const expirationDate = new Date(activationDate);
+  
+  // Convert values to numbers
+  const daysActive = parseInt(order_tags.daysActive, 10);
+  const duration = parseInt(order_tags.duration, 10);
+  
+  // Add months first
+  expirationDate.setMonth(expirationDate.getMonth() + duration);
+  
+  // Adjust days carefully
+  const tempDate = new Date(expirationDate);
+  tempDate.setDate(tempDate.getDate() + daysActive);
+  
+  // If the adjusted date shifted the month, revert back
+  if (tempDate.getMonth() !== expirationDate.getMonth()) {
+      tempDate.setDate(0); // Set to the last day of the previous month
   }
   
-  res.status(200).json({ message: 'Webhook received successfully' });
+  // console.log("==========================")
+  // console.log("orderid", orderId)
+  // console.log("activationDate:", activationDate.toISOString());
+  // console.log("expirationDate:", expirationDate.toISOString());
+  // console.log("daysActive:", daysActive);
+  // console.log("duration:", duration);
+  // console.log("==========================")
+
+  if (payment.payment_status === 'SUCCESS') {
+    // Check if the payment is already recorded
+    db.query('SELECT * FROM payments WHERE order_id = ? AND payment_status = "success"', [orderId], (err, result) => {
+      if (err) {
+        return res.status(500).json({ message: 'Error checking mobile', error: err });
+      }
+      if (result.length > 0) {
+        return res.status(400).json({ message: 'Payment already paid. No need for webhook update.' });
+      }
+
+      // Check if there's an existing active plan
+      db.query('SELECT * FROM active_plans WHERE user_id = ?', [userId], (err, result) => {
+        if (err) {
+          return res.status(500).json({ message: 'Error checking active plan', error: err });
+        }
+
+        const paymentStatus = 'success';
+        const createdAt = new Date();
+
+        if (result.length > 0) {
+          const activePlan = result[0];
+
+          // If plan has expired, update it
+          if (new Date(activePlan.expiration_date) <= new Date()) {
+            db.query(
+              'UPDATE active_plans SET plan_id = ?, activation_date = ?, expiration_date = ? WHERE user_id = ?',
+              [planId, activationDate, expirationDate, userId],
+              (err) => {
+                if (err) {
+                  return res.status(500).json({ message: 'Error updating expired active plan', error: err });
+                }
+
+                // Store payment details
+                db.query(
+                  'INSERT INTO payments (user_id, order_id, amount, payment_status, created_at) VALUES (?, ?, ?, ?, ?)',
+                  [userId, orderId, amount, paymentStatus, createdAt],
+                  (err) => {
+                    if (err) {
+                      return res.status(500).json({ message: 'Error storing payment details', error: err });
+                    }
+                    return res.status(200).json({ message: 'Payment verified and plan renewed successfully.' });
+
+                  }
+                );
+              }
+            );
+          } else {
+            // If plan is still active, update it
+            db.query(
+              'UPDATE active_plans SET plan_id = ?, activation_date = ?, expiration_date = ? WHERE user_id = ?',
+              [planId, activationDate, expirationDate, userId],
+              (err) => {
+                if (err) {
+                  return res.status(500).json({ message: 'Error updating active plan', error: err });
+                }
+
+                db.query(
+                  'INSERT INTO payments (user_id, order_id, amount, payment_status, created_at) VALUES (?, ?, ?, ?, ?)',
+                  [userId, orderId, amount, paymentStatus, createdAt],
+                  (err) => {
+                    if (err) {
+                      return res.status(500).json({ message: 'Error storing payment details', error: err });
+                    }
+                    return res.status(200).json({ message: 'Payment verified and plan upgraded successfully.' });
+
+                  }
+                );
+              }
+            );
+          }
+        } else {
+          // If no active plan exists, insert a new one
+          db.query(
+            'INSERT INTO active_plans (user_id, plan_id, activation_date, days_active, expiration_date) VALUES (?, ?, ?, ?, ?)',
+            [userId, planId, activationDate, daysActive, expirationDate],
+            (err) => {
+              if (err) {
+                return res.status(500).json({ message: 'Error storing active plan details', error: err });
+              }
+
+              db.query(
+                'INSERT INTO payments (user_id, order_id, amount, payment_status, created_at) VALUES (?, ?, ?, ?, ?)',
+                [userId, orderId, amount, paymentStatus, createdAt],
+                (err) => {
+                  if (err) {
+                    return res.status(500).json({ message: 'Error storing payment details', error: err });
+                  }
+                  // return res.json({ message: 'Payment verified and plan upgraded successfully' });
+                  return res.status(200).json({ message: 'Payment verified and plan upgraded successfully.' });
+
+                }
+              );
+            }
+          );
+        }
+
+                  db.query(
+                    'UPDATE payments SET payment_status = ?, created_at = ? WHERE order_id = ?',
+                    ['success', createdAt, orderId],
+                    (err) => {
+                      if (err) {
+                        return res.status(500).json({ message: 'Error storing payment details', error: err });
+                      }
+                    }
+                  );
+
+      });
+    });
+  } else {
+    return res.status(200).json({ message: 'Webhook received, but payment not successful' });
+  }
 });
+
 
 
 // Endpoint for contact form submission
@@ -457,11 +614,11 @@ app.post('/api/contact/insert', async (req, res) => {
 
 // User registration route with reCAPTCHA verification
 app.post('/api/register', async (req, res) => {
-  const { username, email, password, recaptchaToken } = req.body;
+  const { username, email, mobile, password, recaptchaToken } = req.body;
 
   // Validate required fields
-  if (!username || !email || !password || !recaptchaToken) {
-    return res.status(400).json({ message: 'Username, email, password, and recaptcha response are required' });
+  if (!username || !email || !mobile || !password || !recaptchaToken) {
+    return res.status(400).json({ message: 'Username, email, mobile, password, and recaptcha response are required' });
   }
 
   // Verify reCAPTCHA
@@ -499,6 +656,15 @@ app.post('/api/register', async (req, res) => {
         if (result.length > 0) {
           return res.status(400).json({ message: 'Email already exists' });
         }
+      // Check if mobile already exists
+      db.query('SELECT * FROM users WHERE mobile = ?', [mobile], (err, result) => {
+        if (err) {
+          return res.status(500).json({ message: 'Error checking mobile', error: err });
+        }
+        if (result.length > 0) {
+          return res.status(400).json({ message: 'Mobile already exists' });
+        }
+
 
         // Hash the password and insert into the database
         bcrypt.hash(password, 10, (err, hashedPassword) => {
@@ -534,6 +700,8 @@ app.post('/api/register', async (req, res) => {
             }
           );
         });
+
+      });
       });
     });
   } catch (error) {
